@@ -84,6 +84,7 @@ void game_thread(int *game_id)
     char msg[TTT_MSG_LEN];
     MessageType type;
 
+    // start the game
     send_message(gameList[id].cSocketX, OK, "X");
     send_message(gameList[id].cSocketO, OK, "O");
 
@@ -110,20 +111,16 @@ void game_thread(int *game_id)
         }
 
         int move = atoi(msg) - 1;
-        if (move < 0 || move > 8)
+
+        // invalid moves somehow
+        if (move < 0 || move > 8 || gameList[id].board[move / 3][move % 3] != NONE)
         {
             printf("Invalid move from X, client failed to verify move or messge corrupted. Aborting the game.\n");
             gameList[id].state = DRAW;
             break;
         }
 
-        if (gameList[id].board[move / 3][move % 3] != NONE)
-        {
-            printf("Invalid move from X, client failed to verify move or messge corrupted. Aborting the game.\n");
-            gameList[id].state = DRAW;
-            break;
-        }
-
+        // move is ok - update board, check state and send messages
         gameList[id].board[move / 3][move % 3] = X;
         send_message(gameList[id].cSocketX, OK, "X");
 
@@ -135,9 +132,7 @@ void game_thread(int *game_id)
         send_message(gameList[id].cSocketO, MOVE, msg);
 
         if (gameList[id].state != PLAYING)
-        {
             break;
-        }
 
         // O move
         recv_message(gameList[id].cSocketO, &type, msg);
@@ -157,14 +152,9 @@ void game_thread(int *game_id)
         }
 
         move = atoi(msg) - 1;
-        if (move < 0 || move > 8)
-        {
-            printf("Invalid move from O, client failed to verify move or messge corrupted. Aborting the game.\n");
-            gameList[id].state = DRAW;
-            break;
-        }
 
-        if (gameList[id].board[move / 3][move % 3] != NONE)
+        // invalid moves somehow
+        if (move < 0 || move > 8 || gameList[id].board[move / 3][move % 3] != NONE)
         {
             printf("Invalid move from O, client failed to verify move or messge corrupted. Aborting the game.\n");
             gameList[id].state = DRAW;
@@ -182,9 +172,7 @@ void game_thread(int *game_id)
         send_message(gameList[id].cSocketX, MOVE, msg);
 
         if (gameList[id].state != PLAYING)
-        {
             break;
-        }
     }
 
     log_a("Game %d ended with state %s", id, game_state_to_string(gameList[id].state));
@@ -200,6 +188,7 @@ void add_client(SOCKET cSocket, SOCKADDR_IN cAddr)
     int game_id = -1;
     char player = ' ';
 
+    // search for free game
     for (int i = 0; i < 10; i++)
     {
         if (gameList[i].cSocketX == INVALID_SOCKET)
@@ -216,12 +205,14 @@ void add_client(SOCKET cSocket, SOCKADDR_IN cAddr)
         }
     }
 
+    // couldn't find free game
     if (game_id == -1)
     {
         printf("Couldn't add client - no free games\n");
         return;
     }
 
+    // place client in game
     if (player == 'X')
     {
         gameList[game_id].cSocketX = cSocket;
@@ -233,6 +224,7 @@ void add_client(SOCKET cSocket, SOCKADDR_IN cAddr)
         gameList[game_id].cAddrO = cAddr;
     }
 
+    // game full -> spawn thread
     if (gameList[game_id].cSocketX != INVALID_SOCKET && gameList[game_id].cSocketO != INVALID_SOCKET)
     {
         gameList[game_id].hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)game_thread, &game_id, 0, NULL);
@@ -240,14 +232,6 @@ void add_client(SOCKET cSocket, SOCKADDR_IN cAddr)
 
     // printf("Added client %s:%d\n", inet_ntoa(cAddr.sin_addr), ntohs(cAddr.sin_port));
     log_a("Added client %s:%d", inet_ntoa(cAddr.sin_addr), ntohs(cAddr.sin_port));
-}
-
-void remove_client(SOCKET cSocket)
-{
-    for (int i = 0; i < 10; i++)
-    {
-        // TODO:
-    }
 }
 
 int main(void)
@@ -285,8 +269,7 @@ int main(void)
 
     for (int i = 0; i < 10; i++)
     {
-        gameList[i].cSocketX = INVALID_SOCKET;
-        gameList[i].cSocketO = INVALID_SOCKET;
+        reset_game(&gameList[i]);
     }
 
     printf("Server started\n");
