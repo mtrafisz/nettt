@@ -1,5 +1,5 @@
 #define NET_TTT_IMPLEMENTATION
-#include "nettt.h"
+#include "include/nettt.h"
 #define C_ONSOLE_IMPLEMENTATION
 #include "include/elosno.c"
 
