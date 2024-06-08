@@ -1,5 +1,5 @@
 #define NET_TTT_IMPLEMENTATION
-#include "include/nettt.h"
+#include "../include/nettt.h"
 
 #define log(msg) printf("[INFO] " msg "\n")
 #define log_a(fmt, ...) printf("[INFO] " fmt "\n", __VA_ARGS__)

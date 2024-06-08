@@ -1,7 +1,7 @@
 #define NET_TTT_IMPLEMENTATION
-#include "include/nettt.h"
+#include "../include/nettt.h"
 #define C_ONSOLE_IMPLEMENTATION
-#include "include/elosno.c"
+#include "../include/elosno.c"
 
 void display_board(Player board[3][3], Player player)
 {
