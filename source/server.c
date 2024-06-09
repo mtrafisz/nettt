@@ -11,24 +11,24 @@
 #endif
 
 enum {
-    LOG_INFO,
-    LOG_ERROR,
+	LOG_INFO,
+	LOG_ERROR,
 };
 
 #define log(level, msg) printf("[%s] %s\n", level == LOG_INFO ? "INFO" : "ERROR", msg);
 #define log_a(level, fmt, ...) printf("[%s] " fmt "\n", level == LOG_INFO ? "INFO" : "ERROR", __VA_ARGS__);
 
 typedef struct {
-    socket_t clientSockfd[2];
+	socket_t clientSockfd[2];
 	ipv4addr clientAddr[2];
 
-    Player board[3][3];
-    GameState state;
+	Player board[3][3];
+	GameState state;
 
-    thread_t thread;
+	thread_t thread;
 } Game;
 
-Game gameList[MAX_GAMES] = {0};
+Game gameList[MAX_GAMES] = { 0 };
 
 void debugPrintGame(Game* game) {
 	printf("Game %p\n", game);
@@ -81,18 +81,18 @@ void resetGame(Game* game) {
 	for (int i = 0; i < 9; i++) {
 		game->board[i / 3][i % 3] = NONE;
 	}
-    game->state = PLAYING;
-    game->thread = 0;
+	game->state = PLAYING;
+	game->thread = 0;
 }
 
 void gameRoutine(int* gameIndex) {
 	int gidx = *gameIndex;
 	int currentPlayer = 0;
 	Game* game = &gameList[*gameIndex];
-    Message msg;
+	Message msg;
 
-    NetttSendMessage(game->clientSockfd[0], (Message) {
-        .type = OK, .player_str = { X, '\0' }
+	NetttSendMessage(game->clientSockfd[0], (Message) {
+		.type = OK, .player_str = { X, '\0' }
 	});
 	NetttSendMessage(game->clientSockfd[1], (Message) {
 		.type = OK, .player_str = { O, '\0' }
@@ -151,9 +151,9 @@ void gameRoutine(int* gameIndex) {
 }
 
 void addClient(socket_t clientSockfd, ipv4addr clientAddr) {
-    int gameIndex = -1;
-    char player = NONE;
-    
+	int gameIndex = -1;
+	char player = NONE;
+
 	for (int i = 0; i < MAX_GAMES; i++) {
 		if (gameList[i].clientSockfd[0] == INVALID_SOCKET) {
 			gameIndex = i;
@@ -184,62 +184,62 @@ void addClient(socket_t clientSockfd, ipv4addr clientAddr) {
 }
 
 int main(void) {
-    int retCode = 0;
+	int retCode = 0;
 
 #ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        log(LOG_ERROR, "WSAStartup failed");
-        return 1;
-    }
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+		log(LOG_ERROR, "WSAStartup failed");
+		return 1;
+	}
 #endif
-    socket_t sockfd;
-    if ((sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {
-        log(LOG_ERROR, "Failed to create socket");
-        return 1;
-    }
+	socket_t sockfd;
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {
+		log(LOG_ERROR, "Failed to create socket");
+		return 1;
+	}
 
-    ipv4addr localAddr;
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    localAddr.sin_port = htons(NETTT_PORT);
+	ipv4addr localAddr;
+	localAddr.sin_family = AF_INET;
+	localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	localAddr.sin_port = htons(NETTT_PORT);
 
-    if (bind(sockfd, (struct sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
-        log(LOG_ERROR, "Failed to bind socket");
-        retCode = 1;
-        goto cleanup_destroy_socket;
-    }
+	if (bind(sockfd, (struct sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+		log(LOG_ERROR, "Failed to bind socket");
+		retCode = 1;
+		goto cleanup_destroy_socket;
+	}
 
-    if (listen(sockfd, MAX_GAMES) == SOCKET_ERROR) {
-        log(LOG_ERROR, "Failed to listen on socket");
-        retCode = 1;
-        goto cleanup_destroy_socket;
-    }
+	if (listen(sockfd, MAX_GAMES) == SOCKET_ERROR) {
+		log(LOG_ERROR, "Failed to listen on socket");
+		retCode = 1;
+		goto cleanup_destroy_socket;
+	}
 
-    for (int i = 0; i < MAX_GAMES; i++) {
+	for (int i = 0; i < MAX_GAMES; i++) {
 		resetGame(&gameList[i]);
 		// debugPrintGame(&gameList[i]);
 	}
-    log_a(LOG_INFO, "Server started on port %d", NETTT_PORT);
+	log_a(LOG_INFO, "Server started on port %d", NETTT_PORT);
 
-    for (;;) {
-        ipv4addr clientAddr;
-        int clientAddrSize = sizeof(clientAddr);
-        socket_t clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
-        if (clientSockfd == INVALID_SOCKET) {
-            log(LOG_ERROR, "Failed to accept client");
-            continue;
-        }
+	for (;;) {
+		ipv4addr clientAddr;
+		int clientAddrSize = sizeof(clientAddr);
+		socket_t clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
+		if (clientSockfd == INVALID_SOCKET) {
+			log(LOG_ERROR, "Failed to accept client");
+			continue;
+		}
 
-        addClient(clientSockfd, clientAddr);
-    }
+		addClient(clientSockfd, clientAddr);
+	}
 
 cleanup_destroy_socket:
 #ifdef _WIN32
-    closesocket(sockfd);
-    WSACleanup();
+	closesocket(sockfd);
+	WSACleanup();
 #else
-    close(sockfd);
+	close(sockfd);
 #endif
-    return retCode;
+	return retCode;
 }
