@@ -1,294 +1,245 @@
-#define NET_TTT_IMPLEMENTATION
 #include "../include/nettt.h"
 
-#define log(msg) printf("[INFO] " msg "\n")
-#define log_a(fmt, ...) printf("[INFO] " fmt "\n", __VA_ARGS__)
+#define MAX_GAMES 10
 
-typedef struct
-{
-    SOCKET cSocketX;
-    SOCKADDR_IN cAddrX;
-    SOCKET cSocketO;
-    SOCKADDR_IN cAddrO;
+#ifdef _WIN32
+#define createGameRoutine(gameIndex) CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)gameRoutine, &gameIndex, 0, NULL)
+#define gameRoutineJoin(thread) WaitForSingleObject(thread, INFINITE)
+#else
+#define createGameRoutine(gameIndex) pthread_create(&gameList[gameIndex].thread, NULL, (void* (*)(void*))gameRoutine, &gameIndex)
+#define gameRoutineJoin(thread) pthread_join(thread, NULL)
+#endif
 
-    Player board[3][3];
-    GameState state;
+enum {
+	LOG_INFO,
+	LOG_ERROR,
+};
 
-    HANDLE hThread;
+#define log(level, msg) printf("[%s] %s\n", level == LOG_INFO ? "INFO" : "ERROR", msg);
+#define log_a(level, fmt, ...) printf("[%s] " fmt "\n", level == LOG_INFO ? "INFO" : "ERROR", __VA_ARGS__);
+
+typedef struct {
+	socket_t clientSockfd[2];
+	ipv4addr clientAddr[2];
+
+	Player board[3][3];
+	GameState state;
+
+	thread_t thread;
 } Game;
 
-Game gameList[10] = {0};
+Game gameList[MAX_GAMES] = { 0 };
 
-GameState check_game_state(Player board[3][3])
-{
-    for (int i = 0; i < 3; i++)
-    {
-        if (board[i][0] != NONE && board[i][0] == board[i][1] && board[i][1] == board[i][2])
-        {
-            if (board[i][0] == X)
-                return X_WON;
-            else
-                return O_WON;
-        }
-
-        if (board[0][i] != NONE && board[0][i] == board[1][i] && board[1][i] == board[2][i])
-        {
-            if (board[0][i] == X)
-                return X_WON;
-            else
-                return O_WON;
-        }
-    }
-
-    if (board[0][0] != NONE && board[0][0] == board[1][1] && board[1][1] == board[2][2])
-    {
-        if (board[0][0] == X)
-            return X_WON;
-        else
-            return O_WON;
-    }
-
-    if (board[0][2] != NONE && board[0][2] == board[1][1] && board[1][1] == board[2][0])
-    {
-        if (board[0][2] == X)
-            return X_WON;
-        else
-            return O_WON;
-    }
-
-    for (int i = 0; i < 9; i++)
-    {
-        if (board[i / 3][i % 3] == NONE)
-            return PLAYING;
-    }
-
-    return DRAW;
+void debugPrintGame(Game* game) {
+	printf("Game %p\n", game);
+	printf("Client 0: %d\n", game->clientSockfd[0]);
+	printf("Client 1: %d\n", game->clientSockfd[1]);
+	printf("Board:\n");
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			printf("%c ", game->board[i][j]);
+		}
+		putchar('\n');
+	}
+	printf("State: %d\n", game->state);
 }
 
-void reset_game(Game *game)
-{
-    game->cSocketX = INVALID_SOCKET;
-    game->cSocketO = INVALID_SOCKET;
-    game->state = PLAYING;
-    game->hThread = NULL;
+GameState checkGameState(Player board[3][3]) {
+	for (int i = 0; i < 3; i++) {
+		if (board[i][0] != NONE && board[i][0] == board[i][1] && board[i][0] == board[i][2]) {
+			return board[i][0] == X ? X_WON : O_WON;
+		}
+		if (board[0][i] != NONE && board[0][i] == board[1][i] && board[0][i] == board[2][i]) {
+			return board[0][i] == X ? X_WON : O_WON;
+		}
+	}
 
-    for (int i = 0; i < 9; i++)
-    {
-        game->board[i / 3][i % 3] = NONE;
-    }
+	if (board[0][0] != NONE && board[0][0] == board[1][1] && board[0][0] == board[2][2]) {
+		return board[0][0] == X ? X_WON : O_WON;
+	}
+	if (board[0][2] != NONE && board[0][2] == board[1][1] && board[0][2] == board[2][0]) {
+		return board[0][2] == X ? X_WON : O_WON;
+	}
+
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			if (board[i][j] == NONE) return PLAYING;
+		}
+	}
+
+	return DRAW;
 }
 
-void game_thread(int *game_id)
-{
-    int id = *game_id;
-    char msg[TTT_MSG_LEN];
-    MessageType type;
+void resetGame(Game* game) {
+	for (int i = 0; i < 2; i++) {
+		game->clientSockfd[i] = INVALID_SOCKET;
+		game->clientAddr[i].sin_family = AF_INET;
+		game->clientAddr[i].sin_addr.s_addr = htonl(INADDR_ANY);
+		game->clientAddr[i].sin_port = htons(0);
+	}
 
-    // start the game
-    send_message(gameList[id].cSocketX, OK, "X");
-    send_message(gameList[id].cSocketO, OK, "O");
-
-    log_a("Game %d started", id);
-
-    while (gameList[id].state == PLAYING)
-    {
-        // X move
-        recv_message(gameList[id].cSocketX, &type, msg);
-        if (type != MOVE)
-        {
-            if (type == LEAVE)
-            {
-                log_a("Player X left the game in game %d", id);
-                gameList[id].state = DRAW;
-            }
-            else
-            {
-                printf("Invalid message from X: %s. Client bug, or message corrupted. Aborting the game.\n", message_type_to_string(type));
-                gameList[id].state = DRAW;
-            }
-
-            break;
-        }
-
-        int move = atoi(msg) - 1;
-
-        // invalid moves somehow
-        if (move < 0 || move > 8 || gameList[id].board[move / 3][move % 3] != NONE)
-        {
-            printf("Invalid move from X, client failed to verify move or messge corrupted. Aborting the game.\n");
-            gameList[id].state = DRAW;
-            break;
-        }
-
-        // move is ok - update board, check state and send messages
-        gameList[id].board[move / 3][move % 3] = X;
-        send_message(gameList[id].cSocketX, OK, "X");
-
-        gameList[id].state = check_game_state(gameList[id].board);
-        send_message(gameList[id].cSocketX, STATE, game_state_to_string(gameList[id].state));
-        send_message(gameList[id].cSocketO, STATE, game_state_to_string(gameList[id].state));
-
-        Sleep(100); // so the client has time to read the message
-        send_message(gameList[id].cSocketO, MOVE, msg);
-
-        if (gameList[id].state != PLAYING)
-            break;
-
-        // O move
-        recv_message(gameList[id].cSocketO, &type, msg);
-        if (type != MOVE)
-        {
-            if (type == LEAVE)
-            {
-                log_a("Player O left the game in game %d", id);
-                gameList[id].state = DRAW;
-            }
-            else
-            {
-                printf("Invalid message from O: %s. Client bug, or message corrupted. Aborting the game.\n", message_type_to_string(type));
-                gameList[id].state = DRAW;
-            }
-            break;
-        }
-
-        move = atoi(msg) - 1;
-
-        // invalid moves somehow
-        if (move < 0 || move > 8 || gameList[id].board[move / 3][move % 3] != NONE)
-        {
-            printf("Invalid move from O, client failed to verify move or messge corrupted. Aborting the game.\n");
-            gameList[id].state = DRAW;
-            break;
-        }
-
-        gameList[id].board[move / 3][move % 3] = O;
-        send_message(gameList[id].cSocketO, OK, "O");
-
-        gameList[id].state = check_game_state(gameList[id].board);
-        send_message(gameList[id].cSocketX, STATE, game_state_to_string(gameList[id].state));
-        send_message(gameList[id].cSocketO, STATE, game_state_to_string(gameList[id].state));
-
-        Sleep(100); // so the client has time to read the message
-        send_message(gameList[id].cSocketX, MOVE, msg);
-
-        if (gameList[id].state != PLAYING)
-            break;
-    }
-
-    log_a("Game %d ended with state %s", id, game_state_to_string(gameList[id].state));
-
-    closesocket(gameList[id].cSocketX);
-    closesocket(gameList[id].cSocketO);
-
-    reset_game(&gameList[id]);
+	for (int i = 0; i < 9; i++) {
+		game->board[i / 3][i % 3] = NONE;
+	}
+	game->state = PLAYING;
+	game->thread = 0;
 }
 
-void add_client(SOCKET cSocket, SOCKADDR_IN cAddr)
-{
-    int game_id = -1;
-    char player = ' ';
+void gameRoutine(int* gameIndex) {
+	int gidx = *gameIndex;
+	int currentPlayer = 0;
+	Game* game = &gameList[*gameIndex];
+	Message msg;
 
-    // search for free game
-    for (int i = 0; i < 10; i++)
-    {
-        if (gameList[i].cSocketX == INVALID_SOCKET)
-        {
-            game_id = i;
-            player = 'X';
-            break;
-        }
-        else if (gameList[i].cSocketO == INVALID_SOCKET)
-        {
-            game_id = i;
-            player = 'O';
-            break;
-        }
-    }
+	NetttSendMessage(game->clientSockfd[0], (Message) {
+		.type = OK, .player_str = { X, '\0' }
+	});
+	NetttSendMessage(game->clientSockfd[1], (Message) {
+		.type = OK, .player_str = { O, '\0' }
+	});
 
-    // couldn't find free game
-    if (game_id == -1)
-    {
-        printf("Couldn't add client - no free games\n");
-        return;
-    }
+	while (game->state == PLAYING) {
+		if (!NetttRecvMessage(game->clientSockfd[currentPlayer], &msg)) {
+			debugPrintGame(game);
+			break;
+		}
 
-    // place client in game
-    if (player == 'X')
-    {
-        gameList[game_id].cSocketX = cSocket;
-        gameList[game_id].cAddrX = cAddr;
-    }
-    else
-    {
-        gameList[game_id].cSocketO = cSocket;
-        gameList[game_id].cAddrO = cAddr;
-    }
+		if (msg.type != MOVE) {
+			NetttSendMessage(game->clientSockfd[currentPlayer], (Message) {
+				.type = ERR, .reason = "Invalid message type"
+			});
+			continue;
+		}
 
-    // game full -> spawn thread
-    if (gameList[game_id].cSocketX != INVALID_SOCKET && gameList[game_id].cSocketO != INVALID_SOCKET)
-    {
-        gameList[game_id].hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)game_thread, &game_id, 0, NULL);
-    }
+		int move = msg.move[0] - '1';
+		if (move < 0 || move > 8 || game->board[move / 3][move % 3] != NONE) {
+			NetttSendMessage(game->clientSockfd[currentPlayer], (Message) {
+				.type = ERR, .reason = "Invalid move"
+			});
+			continue;
+		}
 
-    // printf("Added client %s:%d\n", inet_ntoa(cAddr.sin_addr), ntohs(cAddr.sin_port));
-    log_a("Added client %s:%d", inet_ntoa(cAddr.sin_addr), ntohs(cAddr.sin_port));
+		game->board[move / 3][move % 3] = currentPlayer == 0 ? X : O;
+		game->state = checkGameState(game->board);
+
+		NetttSendMessage(game->clientSockfd[!currentPlayer], (Message) {
+			.type = MOVE, .move = { msg.move[0] }
+		});
+
+		const char* game_state_str = game_state_to_string(game->state);
+		msg.type = STATE;
+		strcpy(msg.state, game_state_str);
+		NetttSendMessage(game->clientSockfd[0], msg);
+		NetttSendMessage(game->clientSockfd[1], msg);
+
+		if (game->state != PLAYING) {
+			break;
+			debugPrintGame(game);
+		}
+		currentPlayer = 1 - currentPlayer;
+	}
+
+	NetttSendMessage(game->clientSockfd[0], (Message) {
+		.type = END, .data = ""
+	});
+	NetttSendMessage(game->clientSockfd[1], (Message) {
+		.type = END, .data = ""
+	});
+
+	log_a(LOG_INFO, "Game %d ended", gidx);
+	resetGame(game);
 }
 
-int main(void)
-{
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        printf("WSAStartup failed\n");
-        return 1;
-    }
+void addClient(socket_t clientSockfd, ipv4addr clientAddr) {
+	int gameIndex = -1;
+	char player = NONE;
 
-    SOCKET hSocket;
-    if ((hSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET)
-    {
-        printf("socket creation failed\n");
-        return 1;
-    }
+	for (int i = 0; i < MAX_GAMES; i++) {
+		if (gameList[i].clientSockfd[0] == INVALID_SOCKET) {
+			gameIndex = i;
+			player = X;
+			break;
+		}
+		if (gameList[i].clientSockfd[1] == INVALID_SOCKET) {
+			gameIndex = i;
+			player = O;
+			break;
+		}
+	}
 
-    SOCKADDR_IN serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(TTT_PORT);
-    serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (gameIndex == -1) {
+		log(LOG_ERROR, "No available games");
+		return;
+	}
 
-    if (bind(hSocket, (SOCKADDR *)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
-    {
-        printf("couldn't bind socket\n");
-        return 1;
-    }
+	gameList[gameIndex].clientSockfd[player == X ? 0 : 1] = clientSockfd;
+	gameList[gameIndex].clientAddr[player == X ? 0 : 1] = clientAddr;
 
-    if (listen(hSocket, 10) == SOCKET_ERROR)
-    {
-        printf("couldn't listen on socket\n");
-        return 1;
-    }
+	log_a(LOG_INFO, "Client connected to game %d as %c", gameIndex, player);
 
-    for (int i = 0; i < 10; i++)
-    {
-        reset_game(&gameList[i]);
-    }
+	if (player == O) {
+		createGameRoutine(gameIndex);
+		log_a(LOG_INFO, "Game %d started", gameIndex);
+	}
+}
 
-    printf("Server started\n");
+int main(void) {
+	int retCode = 0;
 
-    while (1)
-    {
-        SOCKADDR_IN clientAddr;
-        int clientAddrSize = sizeof(clientAddr);
-        SOCKET cSocket = accept(hSocket, (SOCKADDR *)&clientAddr, &clientAddrSize);
-        if (cSocket == INVALID_SOCKET)
-        {
-            printf("couldn't accept client\n");
-            continue;
-        }
+#ifdef _WIN32
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+		log(LOG_ERROR, "WSAStartup failed");
+		return 1;
+	}
+#endif
+	socket_t sockfd;
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {
+		log(LOG_ERROR, "Failed to create socket");
+		return 1;
+	}
 
-        add_client(cSocket, clientAddr);
-    }
+	ipv4addr localAddr;
+	localAddr.sin_family = AF_INET;
+	localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	localAddr.sin_port = htons(NETTT_PORT);
 
-    closesocket(hSocket);
-    WSACleanup();
-    return 0;
+	if (bind(sockfd, (struct sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+		log(LOG_ERROR, "Failed to bind socket");
+		retCode = 1;
+		goto cleanup_destroy_socket;
+	}
+
+	if (listen(sockfd, MAX_GAMES) == SOCKET_ERROR) {
+		log(LOG_ERROR, "Failed to listen on socket");
+		retCode = 1;
+		goto cleanup_destroy_socket;
+	}
+
+	for (int i = 0; i < MAX_GAMES; i++) {
+		resetGame(&gameList[i]);
+		// debugPrintGame(&gameList[i]);
+	}
+	log_a(LOG_INFO, "Server started on port %d", NETTT_PORT);
+
+	for (;;) {
+		ipv4addr clientAddr;
+		int clientAddrSize = sizeof(clientAddr);
+		socket_t clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
+		if (clientSockfd == INVALID_SOCKET) {
+			log(LOG_ERROR, "Failed to accept client");
+			continue;
+		}
+
+		addClient(clientSockfd, clientAddr);
+	}
+
+cleanup_destroy_socket:
+#ifdef _WIN32
+	closesocket(sockfd);
+	WSACleanup();
+#else
+	close(sockfd);
+#endif
+	return retCode;
 }

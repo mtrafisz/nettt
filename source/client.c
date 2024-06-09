@@ -1,16 +1,18 @@
-#define NET_TTT_IMPLEMENTATION
 #include "../include/nettt.h"
 #define C_ONSOLE_IMPLEMENTATION
 #include "../include/elosno.c"
 
-void display_board(Player board[3][3], Player player)
+Player board[3][3] = {0};
+Player player = NONE;
+
+void display_board()
 {
     clear_console();
 
     printf("Input 'q' to quit\n");
     printf("You are ");
     set_fg_color(player == X ? BLUE : RED);
-    printf("%c\n", player_to_char(player));
+    printf("%c\n", player);
     set_fg_color(WHITE);
 
     for (int i = 0; i < 3; i++)
@@ -19,7 +21,7 @@ void display_board(Player board[3][3], Player player)
         for (int j = 0; j < 3; j++)
         {
             if (board[i][j] != NONE)
-                row[j] = player_to_char(board[i][j]);
+                row[j] = board[i][j];
             else
                 row[j] = '0' + i * 3 + j + 1;
         }
@@ -53,174 +55,138 @@ void display_board(Player board[3][3], Player player)
     }
 }
 
-int main(int argc, char *argv[])
-{
-    if (argc != 2)
-    {
-        printf("Usage: %s <server_addr>\n", argv[0]);
-        return 1;
-    }
 
-    int return_code = 0;
-
+int main (int argc, char *argv[]) {
+#ifdef _WIN32
     WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        printf("WSAStartup failed\n");
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        perror("WSAStartup");
+        return 1;
+    }
+#endif
+    if (argc < 2) {
+        printf("Usage: %s <server_ip>:<server_port>\n", argv[0]);
         return 1;
     }
 
-    SOCKET hSocket;
-    if ((hSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET)
-    {
-        printf("socket creation failed\n");
+    char* server_ip = strtok(argv[1], ":");
+    char* server_port_str = strtok(NULL, ":");
+    int server_port = atoi(server_port_str);
+
+    socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == INVALID_SOCKET) {
+        perror("socket");
         return 1;
     }
 
-    SOCKADDR_IN serverAddr;
+    ipv4addr serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(TTT_PORT);
-    serverAddr.sin_addr.s_addr = inet_addr(argv[1]);
+    serverAddr.sin_port = htons(server_port);
+    serverAddr.sin_addr.s_addr = inet_addr(server_ip);
 
-    if (connect(hSocket, (SOCKADDR *)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
-    {
-        printf("couldn't connect to specified server\n");
-        return_code = 1;
-        goto connect_failed;
+    ipv4addr localAddr;
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons(0);
+    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(sockfd, (struct sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+        perror("bind");
+        return 1;
     }
 
-    char msg[TTT_MSG_LEN];
-    MessageType type;
-
-    printf("Waiting for other player...\n");
-
-    recv_message(hSocket, &type, msg);
-    if (type != OK)
-    {
-        printf("couldn't start the game - invalid server response\n");
-        return_code = 1;
-        goto error_invalid_msg;
+    if (connect(sockfd, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        perror("connect");
+        return 1;
     }
 
-    Player board[3][3] = {0};
-    GameState state = PLAYING;
-    Player player = NONE;
+    Message msg;
+    GameState gameState = PLAYING;
 
-    if (strcmp(msg, "X") == 0)
-        player = X;
-    else
+    puts("Connected to server\nWaiting for other player...");
+
+    NetttRecvMessage(sockfd, &msg);
+    if (msg.type != OK) {
+        printf("Server error: %s\n", msg.reason);
+        return 1;
+    }
+
+    if (msg.player_str[0] == X) player = X;
+    else {
         player = O;
-
-    display_board(board, player);
-
-    // X moves first
-    if (player == O)
         goto player_o_start;
+    }
+    
+    display_board();
 
-    while (state == PLAYING)
-    {
-        char *input_str = malloc(3);
-        printf("Enter move: ");
-        fgets(input_str, 3, stdin);
+    while (gameState == PLAYING) {
+        char move[3];
+        printf("Your move: ");
+        fgets(move, 3, stdin);
 
-        if (input_str[0] == 'q')
-        {
-            send_message(hSocket, LEAVE, "");
+        if (move[0] == 'q') {
+            NetttSendMessage(sockfd, (Message) {
+                .type = LEAVE
+            });
             break;
         }
 
-        if (input_str[0] < '1' || input_str[0] > '9')
-        {
-            printf("Invalid input_str\n");
+        if (move[0] < '1' || move[0] > '9') {
+            puts("Invalid move");
             continue;
         }
 
-        int move = input_str[0] - '1';
-
-        if (board[move / 3][move % 3] != NONE)
-        {
-            printf("Invalid move\n");
+        move[1] = '\0';
+        if (board[(move[0] - '1') / 3][(move[0] - '1') % 3] != NONE) {
+            puts("Invalid move");
             continue;
         }
 
-        send_message(hSocket, MOVE, input_str);
-
-        recv_message(hSocket, &type, msg);
-        if (type != OK)
-        {
-            printf("couldn't make a move - invalid server response: %s\n", message_type_to_string(type));
-            return_code = 1;
-            goto error_invalid_msg;
+        NetttSendMessage(sockfd, (Message) {
+            .type = MOVE, .move = { move[0] }
+        });
+        NetttRecvMessage(sockfd, &msg);
+        if (msg.type != STATE) {
+            printf("Server error: %s\n", msg.reason);
+            return 1;
         }
+        board[(move[0] - '1') / 3][(move[0] - '1') % 3] = player;
+        gameState = string_to_game_state(msg.state);
+        display_board();
 
-        board[move / 3][move % 3] = player;
-
-        display_board(board, player);
-
-        // state after our move
-        recv_message(hSocket, &type, msg);
-        if (type != STATE)
-        {
-            printf("couldn't get game state - invalid server response: %s\n", message_type_to_string(type));
-            return_code = 1;
-            goto error_invalid_msg;
-        }
-
-        state = string_to_game_state(msg);
-        if (state != PLAYING)
+        if (gameState != PLAYING) {
+            printf("Game over: %s (%d)\n", game_state_to_string(gameState), gameState);
             break;
+        }
 
     player_o_start:
-        printf("Waiting for opponent's move...\n");
+        display_board();
 
-        // state after opponent's move
-        recv_message(hSocket, &type, msg);
-        if (type != STATE)
-        {
-            if (type == LEAVE)
-            {
-                printf("Opponent left the game\n");
-                state = player == X ? X_WON : O_WON; // we won
-                break;
-            }
-
-            printf("couldn't get game state - invalid server response: %s\n", message_type_to_string(type));
-            return_code = 1;
-            goto error_invalid_msg;
+        NetttRecvMessage(sockfd, &msg);
+        if (msg.type == MOVE) {
+            board[(msg.move[0] - '1') / 3][(msg.move[0] - '1') % 3] = player == X ? O : X;
+            display_board();
         }
 
-        state = string_to_game_state(msg);
-
-        // opponent's move
-        recv_message(hSocket, &type, msg);
-        if (type != MOVE)
-        {
-            printf("couldn't get opponent's move - invalid server response: %s\n", msg);
-            return_code = 1;
-            goto error_invalid_msg;
+        NetttRecvMessage(sockfd, &msg);
+        if (msg.type == STATE) {
+            gameState = string_to_game_state(msg.state);
+            display_board();
         }
 
-        move = atoi(msg) - 1;
-        board[move / 3][move % 3] = player == X ? O : X;
-
-        display_board(board, player);
+        if (gameState != PLAYING) break;        
     }
 
-    display_board(board, player);
-    if (state == X_WON)
-        printf("X won!\n");
-    else if (state == O_WON)
-        printf("O won!\n");
-    else if (state == DRAW)
-        printf("Draw!\n");
-    else
-        printf("State is broken :(\n");
+    if (gameState == PLAYING) puts("Disconnected from server");
+    else if (gameState == DRAW) puts("It's a draw!");
+    else if (gameState == player) puts("You won!");
+    else puts("You lost!");
+    
 
-error_invalid_msg:
-    closesocket(hSocket);
-
-connect_failed:
+#ifdef _WIN32
     WSACleanup();
-
-    return return_code;
+    closesocket(sockfd);
+#else
+    close(sockfd);
+#endif
+    return 0;
 }
