@@ -9,3 +9,7 @@ mkdir build
 cd build
 cmake .. -G "YourFavouriteGenerator"
 ```
+
+## TODO
+
+- [ ] Reimplement client, so that is handles timeouts end errors better

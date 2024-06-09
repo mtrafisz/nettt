@@ -27,6 +27,8 @@ typedef pthread_t thread_t;
 
 #define NETTT_PORT 6969
 #define NETTT_MSG_MAX_LEN 64
+#define SEPARATOR ":"
+
 typedef struct sockaddr_in ipv4addr;
 
 typedef enum _e_player {
@@ -37,9 +39,9 @@ typedef enum _e_player {
 
 typedef enum _e_game_state {
     PLAYING,
-    X_WON,
-    O_WON,
-    DRAW
+    DRAW,
+    X_WON = 'X',
+    O_WON = 'O',
 } GameState;
 
 typedef enum _e_message_type {
