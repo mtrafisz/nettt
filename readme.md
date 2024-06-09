@@ -2,7 +2,7 @@
 
 ## Building
 
-By Cmake:
+With Cmake:
 
 ```bash
 mkdir build

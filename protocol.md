@@ -37,24 +37,43 @@ Self explenatory
 ## Example game
 
 c1, c2 - clients
+
 s - server
 
 c1 -> s connect()
+
 c2 -> s connect()
+
 c1 <- s OK:X
+
 c2 <- s OK:O
+
 c1 -> s MOVE:1
+
 c2 <- s MOVE:1
+
 c1 <- s STATE:PLAYING
+
 c2 <- s STATE:PLAYING
+
 c2 -> s MOVE:5
+
 c1 <- s MOVE:5
+
 c1 <- s STATE:PLAYING
+
 c2 <- s STATE:PLAYING
+
 ... untill the winning move is made or it's draw:
+
 c2 -> s MOVE:9
+
 c1 <- s MOVE:9
+
 c1 <- s STATE:O_WON
+
 c2 <- s STATE:O_WON
+
 c1 <- s END:
+
 c2 <- s END:
