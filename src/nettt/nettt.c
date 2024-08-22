@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <signal.h>
 
 const char* nettt_msg_type_strings[] = {
     "AOK",
@@ -27,42 +28,42 @@ const char  nettt_player_symbols[] = {' ', 'X', 'O', '?'};
 const char* nettt_msg_fmt = "%.3s:%s;";
 
 const char* game_state_to_string(GameState state) {
-    if (state >= NETTT_INVALID || state < NETTT_WAITING) return nettt_game_state_strings[NETTT_INVALID];
+    if (state >= NETTT_STATE_INVALID || state < NETTT_STATE_WAITING) return nettt_game_state_strings[NETTT_STATE_INVALID];
 
     return nettt_game_state_strings[state];
 }
 
 GameState game_state_from_string(const char* str) {
-    for (int i = 0; i < NETTT_INVALID; ++i) {
+    for (int i = 0; i < NETTT_STATE_INVALID; ++i) {
         if (strcmp(str, nettt_game_state_strings[i]) == 0) {
             return i;
         }
     }
 
-    return NETTT_INVALID;
+    return NETTT_STATE_INVALID;
 }
 
 const char* message_type_to_string(MessageIdentifier id) {
-    if (id >= NETTT_NONE || id < NETTT_AOK) return nettt_msg_type_strings[NETTT_NONE];
+    if (id >= NETTT_MSG_OTHER || id < NETTT_MSG_AOK) return nettt_msg_type_strings[NETTT_MSG_OTHER];
 
     return nettt_msg_type_strings[id];
 }
 
 MessageIdentifier message_type_from_string(const char* str) {
-    for (int i = 0; i < NETTT_NONE; ++i) {
+    for (int i = 0; i < NETTT_MSG_OTHER; ++i) {
         if (strcmp(str, nettt_msg_type_strings[i]) == 0) {
             return i;
         }
     }
 
-    return NETTT_NONE;
+    return NETTT_MSG_OTHER;
 }
 
 bool message_read(Message* msg, int sockfd) {
     struct timeval tval_start, tval_last, tval_result;
     gettimeofday(&tval_start, NULL);
 
-    char buffer[64];
+    char buffer[64] = {0};
     ssize_t bytes_read = 0;
 
     do {
@@ -93,21 +94,40 @@ bool message_read(Message* msg, int sockfd) {
     if (!msg_id) return false;
 
     msg->id = message_type_from_string(msg_id);
-    if (msg_data && strlen(msg_data) > 0) strcpy(msg->data, msg_data);
+    const int msg_data_size = NETTT_MESSAGE_SIZE - sizeof(msg->id);
+    memset(msg->data, 0, msg_data_size);
+    if (msg_data && strlen(msg_data) > 0 && strlen(msg_data) < msg_data_size) strcpy(msg->data, msg_data);
 
     return true;
 }
 
+void handle_sigpipe(int sig) {
+    printf("Client disconnected unexpectedly\n");
+}
+
+// TODO: also timer / EWOULDBLOCK handling for write? Does it make sense?
 bool message_write(Message* msg, int sockfd) {
-    char buffer[64];
+    char buffer[64] = {0};
     snprintf(buffer, sizeof(buffer), nettt_msg_fmt, message_type_to_string(msg->id), msg->data);
 
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
+        if (errno == EPIPE) {
+            // error message from handle_sigpipe
+            // why does sigpipe unhandled fucking crash the whole program?
+            return false;
+        }
+
         perror("write");
         return false;
     }
 
     return true;
+}
+
+void message_reset(Message* msg) {
+    msg->id = NETTT_MSG_ERR;
+    // memset(&msg->data, 0, NETTT_MESSAGE_SIZE - sizeof(msg->id)); // doesn't work?
+    for (int i = 0; i <  NETTT_MESSAGE_SIZE - sizeof(msg->id); ++i) msg->data[i] = 0;
 }
 
 void _acceptor_thrd(void* ctx) {
@@ -118,7 +138,7 @@ void _acceptor_thrd(void* ctx) {
     while (true) {
         int client_sockfd = accept(server_ctx->sockfd, (struct sockaddr*)&client_addr, &client_addr_len);
         if (client_sockfd < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECANCELED) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECANCELED || errno == EINVAL) {  // TODO: Why does SIGINT trigger errno 22 (EINVAL)?
                 continue;
             } else {
                 perror("accept");
@@ -146,6 +166,8 @@ bool server_init(ServerContext* ctx, ConnectionHandler handler, void* user_conte
 #ifdef _WIN32
 #error "WINDOWS NOT SUPPORTED FOR NOW"
 #endif
+    signal(SIGPIPE, handle_sigpipe);
+
     int sockfd;
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
@@ -162,7 +184,6 @@ bool server_init(ServerContext* ctx, ConnectionHandler handler, void* user_conte
         goto err_close_socket;
     }
 
-    // set nonblocking
     int flags = fcntl(sockfd, F_GETFL, 0);
     if (flags < 0) {
         perror("fcntl");
@@ -205,6 +226,7 @@ void server_stop(ServerContext* ctx) {
     shutdown(ctx->sockfd, SHUT_RDWR);
     close(ctx->sockfd);
     pthread_cancel(ctx->acceptor);
+    printf("Server stopped\n");
 }
 
 char player_to_char(Player p) {

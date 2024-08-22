@@ -15,28 +15,29 @@
 #define NETTT_PORT              (6666)
 #define NETTT_BACKLOG           (100)
 #define NETTT_TIMEOUT_MS        (3 * 1000)
+#define NETTT_MESSAGE_SIZE      (32)
 
 typedef enum _nettt_game_state {
-    NETTT_WAITING,
-    NETTT_PLAYING,
-    NETTT_WON_X,
-    NETTT_WON_O,
-    NETTT_DRAW,
+    NETTT_STATE_WAITING,
+    NETTT_STATE_PLAYING,
+    NETTT_STATE_WON_X,
+    NETTT_STATE_WON_O,
+    NETTT_STATE_DRAW,
 
-    NETTT_INVALID
+    NETTT_STATE_INVALID
 } GameState;
 
 const char* game_state_to_string(GameState state);
 GameState game_state_from_string(const char* str);
 
 typedef enum _nettt_msg_type {
-    NETTT_AOK,
-    NETTT_STA,
-    NETTT_ERR,
-    NETTT_MOV,
-    NETTT_END,
+    NETTT_MSG_AOK,
+    NETTT_MSG_STA,
+    NETTT_MSG_ERR,
+    NETTT_MSG_MOV,
+    NETTT_MSG_END,
 
-    NETTT_NONE
+    NETTT_MSG_OTHER
 } MessageIdentifier;
 
 const char* message_type_to_string(MessageIdentifier id);
@@ -44,11 +45,12 @@ MessageIdentifier message_type_from_string(const char* str);
 
 typedef struct _nettt_msg {
     MessageIdentifier id;
-    char data[27];
+    char data[NETTT_MESSAGE_SIZE - sizeof(MessageIdentifier)];  // fancy ... ?
 } Message;
 
 bool message_read(Message* msg, int sockfd);
 bool message_write(Message* msg, int sockfd);
+void message_reset(Message* msg);
 
 typedef struct _conn_ctx {
     int sockfd;
