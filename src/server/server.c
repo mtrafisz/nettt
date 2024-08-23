@@ -16,7 +16,7 @@
 volatile sig_atomic_t running = 1;
 void sigint_handler(int signum) {
     puts("");
-    log_message(LOG_INFO, "SIGINT received, ending games and shutting down...");
+    log_message(LEVEL_INFO, "SIGINT received, ending games and shutting down...");
     running = 0;
 }
 
@@ -70,8 +70,8 @@ void* alive_thread_handler(void* ctx) {
         if (!message_write(&msg, &game->players[0]) || !message_write(&msg, &game->players[1])) {
             game->state = NETTT_STATE_INVALID;
             // ^ Should break game_thread loop and perform cleanup.
-            log_message(LOG_TRACE, "write failed in %s for game [%d] - ending game", __FUNCTION__, game->idx);
-            log_message(LOG_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
+            log_message(LEVEL_TRACE, "write failed in %s for game [%d] - ending game", __FUNCTION__, game->idx);
+            log_message(LEVEL_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
         }
         sleep(NETTT_TIMEOUT_MS / 2000);
     }
@@ -108,7 +108,7 @@ void* game_thread_handler(void* ctx) {
     game->state = NETTT_STATE_PLAYING;
     sleep(NETTT_TIMEOUT_MS / 2000);     // wait for wait-thread-handle to exit
 
-    log_message(LOG_INFO, "game thread [%d] started", game->idx);
+    log_message(LEVEL_INFO, "game thread [%d] started", game->idx);
 
     pthread_t keep_alive_thread;
     pthread_create(&keep_alive_thread, NULL, alive_thread_handler, game);
@@ -143,7 +143,7 @@ void* game_thread_handler(void* ctx) {
         case NETTT_MSG_MOV: {
             if (strlen(msg.data) != 1) { /* error */ assert(false); }
             int idx = strtol(msg.data, NULL, 10);
-            log_message(LOG_TRACE, "requested move for index %d", idx);
+            log_message(LEVEL_TRACE, "requested move for index %d", idx);
             if (idx < 0 || idx > 8) { /* error */ assert(false); }
             int idx_x = idx % 3;
             int idx_y = idx / 3;
@@ -152,7 +152,7 @@ void* game_thread_handler(void* ctx) {
             message_write(&msg, game->current_player == NETTT_X ? &game->players[1] : &game->players[0]);
             
             game->board[idx_y][idx_x] = game->current_player;
-            log_message(LOG_TRACE, "%dx%d set to %c", idx_y, idx_x, player_to_char(game->current_player));
+            log_message(LEVEL_TRACE, "%dx%d set to %c", idx_y, idx_x, player_to_char(game->current_player));
             GameState new_state = game_update_state(game);
 
             message_reset(&msg);
@@ -167,7 +167,7 @@ void* game_thread_handler(void* ctx) {
             game->current_player = game->current_player == NETTT_X ? NETTT_O : NETTT_X;
         } break;
         default:
-            log_message(LOG_TRACE, "id: %d, data: %s", msg.id, msg.data);
+            log_message(LEVEL_TRACE, "id: %d, data: %s", msg.id, msg.data);
             message_reset(&msg);
             msg.id = NETTT_MSG_ERR;
             sprintf(msg.data, "UNEXPECTED MESSAGE");
@@ -185,8 +185,8 @@ game_end: // for "break" out of switch
     message_reset(&msg);
     msg.id = NETTT_MSG_END;
 
-    log_message(LOG_TRACE, "game [%d]: loop broken", game->idx);
-    log_message(LOG_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
+    log_message(LEVEL_TRACE, "game [%d]: loop broken", game->idx);
+    log_message(LEVEL_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
 
     if (game->players[0].active) message_write(&msg, &game->players[0]);
     if (game->players[1].active) message_write(&msg, &game->players[1]);
@@ -196,7 +196,7 @@ game_end: // for "break" out of switch
     shutdown(sockO, SHUT_RDWR);
     close(sockO);
 
-    log_message(LOG_INFO, "game thread [%d] ending", game->idx);
+    log_message(LEVEL_INFO, "game thread [%d] ending", game->idx);
     game_init(game);
 }
 
@@ -241,7 +241,7 @@ void initial_connection_handler(void* conn_ctx) {
     }
 
     if (gid == -1) {
-        log_message(LOG_ERROR, "client tried to connect, but no games are avaliable");
+        log_message(LEVEL_ERROR, "client tried to connect, but no games are avaliable");
         msg.id = NETTT_MSG_ERR;
         strncpy(msg.data, "No available games", 18);
 
@@ -253,7 +253,8 @@ void initial_connection_handler(void* conn_ctx) {
     int pid = game_ctx->games[gid].current_player;
     game_ctx->games[gid].players[pid - 1] = *ctx;
 
-    msg.id = NETTT_MSG_AOK;
+    msg.id = NETTT_MSG_STA;
+    sprintf(msg.data, "%s", game_state_to_string(NETTT_STATE_WAITING));
 
     if (pid == NETTT_X) {
         game_ctx->games[gid].current_player = NETTT_O;  // as in "next player will be"
@@ -275,15 +276,15 @@ void initial_connection_handler(void* conn_ctx) {
         pthread_create(&game_thread, NULL, game_thread_handler, &game_ctx->games[gid]);
         pthread_detach(game_thread);
     } else {
-        log_message(LOG_ERROR, "Invalid player id: %d", pid);
+        log_message(LEVEL_ERROR, "Invalid player id: %d", pid);
         msg.id = NETTT_MSG_ERR;
     }
 
-    log_message(LOG_INFO, "%s joined game %d as %c", netaddress_to_str(ctx->remote_address), gid, player_to_char(pid));
+    log_message(LEVEL_INFO, "%s joined game %d as %c", netaddress_to_str(ctx->remote_address), gid, player_to_char(pid));
 
 send:
     if (!message_write(&msg, ctx)) {
-        log_message(LOG_ERROR, "Failed to send message");
+        log_message(LEVEL_ERROR, "Failed to send message");
     }
 
     return;
@@ -297,7 +298,7 @@ fatal_err:
 int main(void) {
     logger_init(stdout);
     set_log_append_dt(false);
-    set_log_level(LOG_TRACE);
+    set_log_level(LEVEL_TRACE);
 
     signal(SIGINT, sigint_handler);
     ServerContext ctx = {0};
@@ -306,12 +307,12 @@ int main(void) {
     game_ctx_init(&game_ctx);
 
     if (!server_init(&ctx, initial_connection_handler, &game_ctx)) {
-        log_message(LOG_FATAL, "Failed to initialize server context");
+        log_message(LEVEL_FATAL, "Failed to initialize server context");
         return 1;
     }
 
     if (!server_start(&ctx)) {
-        log_message(LOG_FATAL, "Failed to start server");
+        log_message(LEVEL_FATAL, "Failed to start server");
         return 1;
     }
 

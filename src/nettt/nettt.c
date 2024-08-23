@@ -121,7 +121,7 @@ bool message_read(Message* msg, ConnectionContext* ctx) {
 }
 
 void handle_sigpipe(int sig) {
-    log_message(LOG_WARNING, "Client disconnected unexpectedly");
+    log_message(LEVEL_WARNING, "Client disconnected unexpectedly");
 }
 
 // TODO: also timer / EWOULDBLOCK handling for write? Would it make sense?
@@ -134,7 +134,7 @@ bool message_write(Message* msg, ConnectionContext* ctx) {
             // error message from handle_sigpipe
             // why does sigpipe unhandled fucking crash the whole program?
             ctx->active = false;
-            log_message(LOG_TRACE, "EPIPE in %s %s %d", __FILE__, __FUNCTION__, __LINE__);
+            log_message(LEVEL_TRACE, "EPIPE in %s %s %d", __FILE__, __FUNCTION__, __LINE__);
 
             return false;
         }
@@ -256,7 +256,7 @@ void server_stop(ServerContext* ctx) {
     shutdown(ctx->sockfd, SHUT_RDWR);
     close(ctx->sockfd);
     pthread_cancel(ctx->acceptor);
-    log_message(LOG_INFO, "TCP server shut down");
+    log_message(LEVEL_INFO, "TCP server shut down");
 }
 
 char player_to_char(Player p) {

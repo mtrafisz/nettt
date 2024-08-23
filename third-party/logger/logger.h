@@ -9,7 +9,7 @@
 
 int main(void) {
     logger_init(stdout);
-    set_log_level(LOG_ALL);
+    set_log_level(LEVEL_ALL);
     set_log_append_dt(false);
 
     const char* filename = "logger.c";
@@ -47,14 +47,14 @@ int main(void) {
 #include <string.h>
 
 typedef enum {
-    LOG_ALL = 0,
-    LOG_TRACE,
-    LOG_DEBUG,
-    LOG_INFO,
-    LOG_WARNING,
-    LOG_ERROR,
-    LOG_FATAL,
-    LOG_NONE
+    LEVEL_ALL = 0,
+    LEVEL_TRACE,
+    LEVEL_DEBUG,
+    LEVEL_INFO,
+    LEVEL_WARNING,
+    LEVEL_ERROR,
+    LEVEL_FATAL,
+    LEVEL_NONE
 } LogLevel;
 
 /**
@@ -67,7 +67,7 @@ void logger_init(FILE* output);
 /**
  * Set minimal level of logs, that will be displayed
  *
- * Ex. if You call `set_log_level(LOG_FATAL)` only log messages containing fatal errors will be written to FILE
+ * Ex. if You call `set_log_level(LEVEL_FATAL)` only log messages containing fatal errors will be written to FILE
  */
 void set_log_level(LogLevel level);
 /**
@@ -91,7 +91,7 @@ void set_log_append_lvl(bool on);
  * Write log message to specified FILE
  */
 void log_message(LogLevel level, const char* fmt, ...);
-#define log_errno_msg(msg) log_message(LOG_FATAL, msg": %s", strerror(errno));
-#define log_errno_fmt(fmt, ...) log_message(LOG_FATAL, fmt": %s", __VA_ARGS__, strerror(errno));
+#define log_errno_msg(msg) log_message(LEVEL_FATAL, msg": %s", strerror(errno));
+#define log_errno_fmt(fmt, ...) log_message(LEVEL_FATAL, fmt": %s", __VA_ARGS__, strerror(errno));
 
 #endif

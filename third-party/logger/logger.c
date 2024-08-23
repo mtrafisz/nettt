@@ -20,7 +20,7 @@ struct __logger_ctx {
 };
 
 static struct __logger_ctx logger_ctx =  {
-    .min_log_level = LOG_DEBUG,
+    .min_log_level = LEVEL_DEBUG,
     .output = NULL,
     .color = true,
     .append_nl = true,
@@ -35,7 +35,7 @@ void logger_init(FILE* output) {
     const char* term = getenv("TERM");
     if (term == NULL ||
         (strstr(term, "xterm") == NULL && strstr(term, "screen") == NULL && strstr(term, "ansi") == NULL && strstr(term, "color") == NULL)) {
-        log_message(LOG_TRACE, "Color likely not supported in terminal");
+        log_message(LEVEL_TRACE, "Color likely not supported in terminal");
         logger_ctx.color = false;
     }
 
@@ -47,7 +47,7 @@ void logger_init(FILE* output) {
 }
 
 void set_log_level(LogLevel level) {
-    if (level > LOG_NONE || level < LOG_ALL) return;
+    if (level > LEVEL_NONE || level < LEVEL_ALL) return;
 
     logger_ctx.min_log_level = level;
 }
@@ -85,7 +85,7 @@ const char* log_level_to_string(LogLevel level) {
         "\033[1;31mERROR\033[0m",
         "\033[1;30m\033[1;41mFATAL\033[0m",
     };
-    if (level <= LOG_ALL || level >= LOG_NONE) return NULL;
+    if (level <= LEVEL_ALL || level >= LEVEL_NONE) return NULL;
     return logger_ctx.color ? strings_color[level-1] : strings[level-1];
 }
 
