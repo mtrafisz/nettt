@@ -1,4 +1,5 @@
 #include "../nettt/nettt.h"
+#include <logger/logger.h>
 
 #include <signal.h>
 #include <stdio.h>
@@ -55,9 +56,11 @@ void* alive_thread_handler(void* ctx) {
     strcpy(msg.data, "ALIVE");
 
     while (game->state == NETTT_STATE_PLAYING) {
-        if (!message_write(&msg, game->players[0].sockfd) || !message_write(&msg, game->players[1].sockfd)) {
+        if (!message_write(&msg, &game->players[0]) || !message_write(&msg, &game->players[1])) {
             game->state = NETTT_STATE_INVALID;
             // ^ Should break game_thread loop and perform cleanup.
+            log_message(LOG_TRACE, "write failed in %s for game [%d] - ending game", __FUNCTION__, game->idx);
+            log_message(LOG_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
         }
         sleep(NETTT_TIMEOUT_MS / 2000);
     }
@@ -71,7 +74,7 @@ void* game_thread_handler(void* ctx) {
     game->state = NETTT_STATE_PLAYING;
     sleep(NETTT_TIMEOUT_MS / 2000);     // wait for wait-thread-handle to exit
 
-    printf("Game thread [%d] started\n", game->idx);
+    log_message(LOG_INFO, "game thread [%d] started", game->idx);
 
     pthread_t keep_alive_thread;
     pthread_create(&keep_alive_thread, NULL, alive_thread_handler, game);
@@ -85,15 +88,16 @@ void* game_thread_handler(void* ctx) {
     };
 
     msg.data[0] = 'X';
-    message_write(&msg, sockX);
+    message_write(&msg, &game->players[0]);
 
     msg.data[0] = 'O';
-    message_write(&msg, sockO);
+    message_write(&msg, &game->players[1]);
 
     // GAME LOOP
 
     while (game->state == NETTT_STATE_PLAYING) {
         /* GAMING B-) */
+        sleep(1);
     }
 
     // GAME END
@@ -103,15 +107,19 @@ void* game_thread_handler(void* ctx) {
 
     message_reset(&msg);
     msg.id = NETTT_MSG_END;
-    message_write(&msg, sockX);
-    message_write(&msg, sockO);
+
+    log_message(LOG_TRACE, "game [%d]: loop broken", game->idx);
+    log_message(LOG_TRACE, "connection status: x - %d, o - %d", game->players[0].active, game->players[1].active);
+
+    if (game->players[0].active) message_write(&msg, &game->players[0]);
+    if (game->players[1].active) message_write(&msg, &game->players[1]);
 
     shutdown(sockX, SHUT_RDWR);
     close(sockX);
     shutdown(sockO, SHUT_RDWR);
     close(sockO);
 
-    printf("Game thread [%d] ended\n", game->idx);
+    log_message(LOG_INFO, "game thread [%d] ending", game->idx);
     game_init(game);
 }
 
@@ -128,7 +136,7 @@ void* wait_thread_handler(void* ctx) {
     strcpy(msg.data, state);
 
     while (game->state == NETTT_STATE_WAITING) {
-        if (!message_write(&msg, game->players[0].sockfd)) {
+        if (!message_write(&msg, &game->players[0])) {
             // client left - reset game and leave.
             game_init(game);
             break;
@@ -147,16 +155,14 @@ void initial_connection_handler(void* conn_ctx) {
     int gid = -1;
 
     for (int i = 0; i < NETTT_MAX_GAMES; ++i) {
-        if (game_ctx->games[i].state == NETTT_STATE_WAITING) {
-            gid = i;
-            break;
-        } else {
-            printf("Game %d is in state %s\n", i, game_state_to_string(game_ctx->games[i].state));
-        }
+        if (game_ctx->games[i].state != NETTT_STATE_WAITING) continue;
+
+        gid = i;
+        break;
     }
 
     if (gid == -1) {
-        fprintf(stderr, "No available games\n");
+        log_message(LOG_ERROR, "client tried to connect, but no games are avaliable");
         msg.id = NETTT_MSG_ERR;
         strncpy(msg.data, "No available games", 18);
 
@@ -184,15 +190,15 @@ void initial_connection_handler(void* conn_ctx) {
         pthread_create(&game_thread, NULL, game_thread_handler, &game_ctx->games[gid]);
         pthread_detach(game_thread);
     } else {
-        printf("Invalid player id '%c' (%d)\n", player_to_char(pid), pid);
+        log_message(LOG_ERROR, "Invalid player id: %d", pid);
         msg.id = NETTT_MSG_ERR;
     }
 
-    printf("New player joined game %d as %c\n", gid,  player_to_char(pid));
+    log_message(LOG_INFO, "%s joined game %d as %c", netaddress_to_str(ctx->remote_address), gid, player_to_char(pid));
 
 send:
-    if (!message_write(&msg, ctx->sockfd)) {
-        fprintf(stderr, "Failed to send message\n");
+    if (!message_write(&msg, ctx)) {
+        log_message(LOG_ERROR, "Failed to send message");
     }
 
     return;
@@ -204,6 +210,10 @@ fatal_err:
 }
 
 int main(void) {
+    logger_init(stdout);
+    set_log_append_dt(false);
+    set_log_level(LOG_TRACE);
+
     signal(SIGINT, sigint_handler);
     ServerContext ctx = {0};
     GameContext game_ctx = {0};
@@ -211,12 +221,12 @@ int main(void) {
     game_ctx_init(&game_ctx);
 
     if (!server_init(&ctx, initial_connection_handler, &game_ctx)) {
-        fprintf(stderr, "Failed to initialize server context\n");
+        log_message(LOG_FATAL, "Failed to initialize server context");
         return 1;
     }
 
     if (!server_start(&ctx)) {
-        fprintf(stderr, "Failed to start server\n");
+        log_message(LOG_FATAL, "Failed to start server");
         return 1;
     }
 

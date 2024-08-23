@@ -4,6 +4,8 @@
 #ifdef _WIN32
 #warning Get off of Your gaming OS, and run linux like a normal person
 #error Windows is not supported yet
+#else
+#include <netinet/in.h> // for sockaddr_in
 #endif
 
 #include <pthread.h>
@@ -11,11 +13,15 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
-#define NETTT_PORT              (6666)
+#include <logger/logger.h>
+
+#define NETTT_PORT              (2137)
 #define NETTT_BACKLOG           (100)
 #define NETTT_TIMEOUT_MS        (3 * 1000)
 #define NETTT_MESSAGE_SIZE      (32)
+#define NETTT_PROBE_TIMEOUT_MS  (100)
 
 typedef enum _nettt_game_state {
     NETTT_STATE_WAITING,
@@ -43,17 +49,18 @@ typedef enum _nettt_msg_type {
 const char* message_type_to_string(MessageIdentifier id);
 MessageIdentifier message_type_from_string(const char* str);
 
-typedef struct _nettt_msg {
-    MessageIdentifier id;
-    char data[NETTT_MESSAGE_SIZE - sizeof(MessageIdentifier)];  // fancy ... ?
-} Message;
+typedef struct _net_addr {
+    uint32_t ip;
+    uint16_t port;
+} NetAddress;
 
-bool message_read(Message* msg, int sockfd);
-bool message_write(Message* msg, int sockfd);
-void message_reset(Message* msg);
+const char* netaddress_to_str(NetAddress addr);
+NetAddress netaddress_from_sockaddrin(struct sockaddr_in sockaddr);
 
 typedef struct _conn_ctx {
     int sockfd;
+    NetAddress remote_address;
+    bool active;
     void* user_context;
 } ConnectionContext;
 
@@ -70,6 +77,15 @@ typedef struct {
 bool server_init(ServerContext* ctx, ConnectionHandler handler, void* user_context);
 bool server_start(ServerContext* ctx);
 void server_stop(ServerContext* ctx);
+
+typedef struct _nettt_msg {
+    MessageIdentifier id;
+    char data[NETTT_MESSAGE_SIZE - sizeof(MessageIdentifier)];  // fancy ... ?
+} Message;
+
+bool message_read(Message* msg, ConnectionContext* ctx);
+bool message_write(Message* msg, ConnectionContext* ctx);
+void message_reset(Message* msg);
 
 typedef enum _nettt_player {
     NETTT_EMPTY,

@@ -59,7 +59,28 @@ MessageIdentifier message_type_from_string(const char* str) {
     return NETTT_MSG_OTHER;
 }
 
-bool message_read(Message* msg, int sockfd) {
+const char* netaddress_to_str(NetAddress addr) {
+    static char str[18] = {0};
+    inet_ntop(AF_INET, &addr.ip, str, 12);
+    size_t len = strlen(str);
+    str[len++] = ':';
+
+    // sprintf straigth to str+len doesn't work
+    char port[6] = {0};
+    sprintf(port, "%d", addr.port);
+    memcpy(str + len, port, 6);
+
+    return str;
+}
+
+NetAddress netaddress_from_sockaddrin(struct sockaddr_in sockaddr) {
+    return (NetAddress) {
+        .ip = sockaddr.sin_addr.s_addr,
+        .port = sockaddr.sin_port,
+    };
+}
+
+bool message_read(Message* msg, ConnectionContext* ctx) {
     struct timeval tval_start, tval_last, tval_result;
     gettimeofday(&tval_start, NULL);
 
@@ -69,18 +90,16 @@ bool message_read(Message* msg, int sockfd) {
     do {
         gettimeofday(&tval_last, NULL);
         
-        if ((bytes_read = read(sockfd, buffer, sizeof(buffer))) < 0) {
+        if ((bytes_read = read(ctx->sockfd, buffer, sizeof(buffer))) < 0) {
             if (errno != EAGAIN || errno != EWOULDBLOCK) {
-                perror("read");
+                log_errno_msg("failed to read message");
                 return false;
             }
+            usleep(NETTT_PROBE_TIMEOUT_MS * 1000);
         }
 
         timersub(&tval_last, &tval_start, &tval_result);
     } while (bytes_read <= 0 && (tval_result.tv_sec * 1000 + tval_result.tv_usec / 1000) < NETTT_TIMEOUT_MS);
-
-    printf("Bytes read: %ld\n", bytes_read);
-    printf("elapsed: %ld\n", tval_result.tv_sec * 1000 + tval_result.tv_usec / 1000);
 
     if (bytes_read < 5) {
         return false;
@@ -102,22 +121,25 @@ bool message_read(Message* msg, int sockfd) {
 }
 
 void handle_sigpipe(int sig) {
-    printf("Client disconnected unexpectedly\n");
+    log_message(LOG_WARNING, "Client disconnected unexpectedly");
 }
 
 // TODO: also timer / EWOULDBLOCK handling for write? Does it make sense?
-bool message_write(Message* msg, int sockfd) {
+bool message_write(Message* msg, ConnectionContext* ctx) {
     char buffer[64] = {0};
     snprintf(buffer, sizeof(buffer), nettt_msg_fmt, message_type_to_string(msg->id), msg->data);
 
-    if (write(sockfd, buffer, strlen(buffer)) < 0) {
+    if (write(ctx->sockfd, buffer, strlen(buffer)) < 0) {
         if (errno == EPIPE) {
             // error message from handle_sigpipe
             // why does sigpipe unhandled fucking crash the whole program?
+            ctx->active = false;
+            log_message(LOG_TRACE, "EPIPE in %s %s %d", __FILE__, __FUNCTION__, __LINE__);
+
             return false;
         }
 
-        perror("write");
+        log_errno_msg("failed to write message");
         return false;
     }
 
@@ -138,24 +160,32 @@ void _acceptor_thrd(void* ctx) {
     while (true) {
         int client_sockfd = accept(server_ctx->sockfd, (struct sockaddr*)&client_addr, &client_addr_len);
         if (client_sockfd < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECANCELED || errno == EINVAL) {  // TODO: Why does SIGINT trigger errno 22 (EINVAL)?
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECANCELED) {
+                usleep(NETTT_PROBE_TIMEOUT_MS * 1000);
                 continue;
             } else {
-                perror("accept");
+                log_errno_msg("failed to accept client");
                 break;
             }
         }
 
         int flags = fcntl(client_sockfd, F_GETFL, 0);
         if (flags < 0) {
-            perror("fcntl");
+            log_errno_msg("failed to set socket options");
+
             break;
         }
 
-        ConnectionContext conn_ctx = {client_sockfd, server_ctx->user_context};
+        // ConnectionContext conn_ctx = {client_sockfd, server_ctx->user_context, true};
+        ConnectionContext conn_ctx = {
+            .active = true,
+            .sockfd = client_sockfd,
+            .user_context = server_ctx->user_context,
+            .remote_address = netaddress_from_sockaddrin(client_addr),
+        };
         pthread_t handler_thread;
         if (pthread_create(&handler_thread, NULL, (void*(*)(void*))server_ctx->handler, &conn_ctx) != 0) {
-            perror("pthread_create");
+            log_errno_msg("failed to create thread");
             break;
         }
         pthread_detach(handler_thread);
@@ -170,7 +200,7 @@ bool server_init(ServerContext* ctx, ConnectionHandler handler, void* user_conte
 
     int sockfd;
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket");
+        log_errno_msg("socket creation error");
         return false;
     }
 
@@ -180,18 +210,18 @@ bool server_init(ServerContext* ctx, ConnectionHandler handler, void* user_conte
     bind_addr.sin_port = htons(NETTT_PORT);
 
     if (bind(sockfd, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
-        perror("bind");
+        log_errno_msg("failed to bind to address");
         goto err_close_socket;
     }
 
     int flags = fcntl(sockfd, F_GETFL, 0);
     if (flags < 0) {
-        perror("fcntl");
+        log_errno_msg("failed to set socket options");
         goto err_close_socket;
     }
 
     if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        perror("fcntl");
+        log_errno_msg("failed to set socket options");
         goto err_close_socket;
     }
     ctx->handler = handler;
@@ -208,12 +238,12 @@ err_close_socket:
 
 bool server_start(ServerContext* ctx) {
     if (listen(ctx->sockfd, NETTT_BACKLOG) < 0) {
-        perror("listen");
+        log_errno_msg("failed to listen for connections");
         return false;
     }
 
     if (pthread_create(&ctx->acceptor, NULL, (void*(*)(void*))_acceptor_thrd, ctx) != 0) {
-        perror("pthread_create");
+        log_errno_msg("failed to create thread");
         return false;
     }
 
@@ -226,7 +256,7 @@ void server_stop(ServerContext* ctx) {
     shutdown(ctx->sockfd, SHUT_RDWR);
     close(ctx->sockfd);
     pthread_cancel(ctx->acceptor);
-    printf("Server stopped\n");
+    log_message(LOG_INFO, "TCP server shut down");
 }
 
 char player_to_char(Player p) {

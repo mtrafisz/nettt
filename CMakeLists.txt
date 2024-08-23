@@ -7,6 +7,8 @@ find_package(PkgConfig REQUIRED)
 execute_process(COMMAND git submodule update --init --recursive --depth=1
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+add_library(logger third-party/logger/logger.c)
+
 file(GLOB NETTT_SOURCES "src/nettt/*.c")
 file(GLOB_RECURSE NETTT_CLIENT_SOURCES "src/client/*.c")
 file(GLOB_RECURSE NETTT_SERVER_SOURCES "src/server/*.c")
@@ -23,5 +25,6 @@ endif ()
 add_executable(nettt_client ${NETTT_CLIENT_SOURCES})
 add_executable(nettt_server ${NETTT_SERVER_SOURCES})
 
-target_link_libraries(nettt_client nettt)
-target_link_libraries(nettt_server nettt)
+target_link_libraries(nettt_client nettt logger)
+target_link_libraries(nettt_server nettt logger)
+include_directories(third-party)

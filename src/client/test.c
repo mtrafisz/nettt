@@ -28,10 +28,16 @@ int main(void) {
         return 1;
     }
 
+    ConnectionContext ctx = {
+        .active = true,
+        .sockfd = sockfd,
+        .user_context = NULL
+    };
+
     // wait for message:
     Message msg = {0};
     do {
-        if (!message_read(&msg, sockfd)) {
+        if (!message_read(&msg, &ctx)) {
             // putchar('.');
             // fflush(stdout);
             // continue;
@@ -42,6 +48,7 @@ int main(void) {
 
         const char* format = "Received message [%s:%s]\n";
         printf(format, message_type_to_string(msg.id), msg.data);
+        if (msg.id == NETTT_MSG_END) break;
     } while (running);
 
     close(sockfd);
