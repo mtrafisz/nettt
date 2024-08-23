@@ -124,7 +124,7 @@ void handle_sigpipe(int sig) {
     log_message(LOG_WARNING, "Client disconnected unexpectedly");
 }
 
-// TODO: also timer / EWOULDBLOCK handling for write? Does it make sense?
+// TODO: also timer / EWOULDBLOCK handling for write? Would it make sense?
 bool message_write(Message* msg, ConnectionContext* ctx) {
     char buffer[64] = {0};
     snprintf(buffer, sizeof(buffer), nettt_msg_fmt, message_type_to_string(msg->id), msg->data);

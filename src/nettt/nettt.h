@@ -17,7 +17,7 @@
 
 #include <logger/logger.h>
 
-#define NETTT_PORT              (2137)
+#define NETTT_PORT              (6969)
 #define NETTT_BACKLOG           (100)
 #define NETTT_TIMEOUT_MS        (3 * 1000)
 #define NETTT_MESSAGE_SIZE      (32)
